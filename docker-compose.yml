@@ -1,0 +1,44 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prosody
+      POSTGRES_PASSWORD: yourDBpass  # same in prosody cfg.lua
+      POSTGRES_DB: prosody
+      TZ: UTC
+    volumes:
+      - /mnt/data_storage/prosody_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "prosody"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - xmpp
+
+  prosody:
+      image: prosody/prosody:0.11
+      container_name: prosody
+      restart: unless-stopped
+      ports:
+        - 80
+        - 443
+        - 5222:5222
+        - 5269:5269
+        - 5281:5281
+      volumes:
+        - ./config:/etc/prosody
+        - ./logs:/var/log/prosody
+        - /etc/prosody/certs/chat.domain.com:/etc/prosody/certs
+        - /mnt/data_storage/prosody_data:/var/lib/prosody
+      depends_on:
+        - postgres
+      networks:
+        - xmpp
+
+networks:
+  xmpp:
+    external: true
