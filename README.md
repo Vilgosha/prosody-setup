@@ -1,96 +1,99 @@
 # prosody-setup
 
-## Working but not properly! 
-## Prosody version 0.12+ required for stable work.
+Docker Compose setup for a self-hosted XMPP chat server using Prosody. Includes PostgreSQL as the backend, TLS via Caddy, and a fairly complete module config — stream management, MAM (message history), file upload, push notifications, WebSocket/BOSH support.
 
-Currently this chat server is working but a lot of modules are not supported because docker image created on base prosody server version 0.11. For stable work of all modules version 0.12 of prosody required. 
+> **Status: abandoned.** The official `prosody/prosody` Docker image is stuck on version 0.11 and hasn't been updated in years. Several modules (stream management XEP-0198, push XEP-0357, HTTP file upload) require 0.12+ to work properly. The server runs but those features are broken. I stopped here and moved on to look for a better-maintained XMPP solution for Docker.
+>
+> Leaving this here in case it's useful as a reference or starting point.
 
-This project was abandoned because official prosody image wasn't updated for 4 years now. So I decide to look for stable and supported solution for Docker.
+## What's configured
 
-Anyway I will left here short instruction how to start your own prosody server on docker using docker-compose.
+- **Prosody 0.11** — XMPP server
+- **PostgreSQL 16** — message and roster storage
+- **Caddy** — TLS termination and reverse proxy for WebSocket/BOSH/upload endpoints
+- **Modules:** carbons, MAM, offline messages, file upload, BOSH, WebSocket, stream management, push notifications, CSI
+- **Rate limiting** — 10kb/s client, 30kb/s server-to-server
+- **Encryption enforced** — both c2s and s2s require TLS
 
-1) Create folder where all server configs will be located
+## Setup
 
-       mkdir /prosody_server
-   
-       mkdir /prosody_server/config
+**1. Create directories**
 
-       mkdir /prosody_server/logs
-     
-3) Copy there docker-compose.yml, prosody.cfg.lua ### for config your server only this two files required.
+```bash
+mkdir -p /prosody_server/config
+mkdir -p /prosody_server/logs
+mkdir -p /mnt/data_storage/prosody_pgdata
+```
 
-4) I got issued certificates by Let's encrypt using Caddy.
+Fix Postgres permissions (runs as UID 999):
+```bash
+sudo chown -R 999:999 /mnt/data_storage/prosody_pgdata
+```
 
-        chat.domain.com {
-   
-          encode zstd gzip
+**2. Place your certificates**
 
-  
-          @ws path /xmpp-websocket*
-          reverse_proxy @ws http://prosody:5280
+Prosody expects certs issued separately — I used Caddy with Let's Encrypt:
 
+```
+/etc/prosody/certs/chat.domain.com.crt
+/etc/prosody/certs/chat.domain.com.key
+```
 
-          @bosh path /http-bind*
-          reverse_proxy @bosh http://prosody:5280
+```bash
+sudo chown -R 1000:1000 /etc/prosody/certs
+sudo chmod 644 chat.domain.com.crt
+sudo chmod 640 chat.domain.com.key
+```
 
+**3. Set your DB password** in both `docker-compose.yml` and `prosody.cfg.lua` — they must match.
 
-          @upload path /upload/*
-          reverse_proxy @upload http://prosody:5280
+> ⚠️ The DB password is in plain text in both files. Don't commit them with real credentials. Use a `.env` file for `docker-compose.yml` and keep `prosody.cfg.lua` out of version control, or replace the password with a placeholder before pushing.
 
-  
-          handle_path /en/* {
-            @ws2 path /xmpp-websocket*
-            reverse_proxy @ws2 http://prosody:5280
+**4. Create the external Docker network**
 
-            @bosh2 path /http-bind*
-            reverse_proxy @bosh2 http://prosody:5280
+```bash
+docker network create xmpp
+```
 
-            @upload2 path /upload/*
-            reverse_proxy @upload2 http://prosody:5280
-            }
-          }
+**5. Start**
 
-5) Place generated certificates for Prosody separetly and give them chmod and chown
+```bash
+docker compose up -d
+```
 
-(/etc/prosody/certs/chat.domain.com)
-chown -R 1000:1000 /path/to/certs
-chmod 644 chat.domain.com.crt
-chomd 640 chat.domain.com.key
+Logs are in `/prosody_server/logs`.
 
-6) Allow ports in ufw
-5222                       ALLOW       Anywhere
-5280                       ALLOW       Anywhere
-5281                       ALLOW       Anywhere
-5269                       ALLOW       Anywhere
+## Caddy config
 
-7) Port Forwarding on your router.
+```caddy
+chat.domain.com {
+  encode zstd gzip
 
-8) In my case for DB was chosen PostgreSQL. DB was placed in another disk.
+  @ws    path /xmpp-websocket*
+  @bosh  path /http-bind*
+  @upload path /upload/*
 
-        sudo mkdir -p /mnt/data_storage/prosody_pgdata
+  reverse_proxy @ws     http://prosody:5280
+  reverse_proxy @bosh   http://prosody:5280
+  reverse_proxy @upload http://prosody:5280
+}
+```
 
-Postgres image runs as uid 999 (postgres). Give it ownership:
+## Firewall (ufw)
 
-        sudo chown -R 999:999 /mnt/data_storage/prosody_pgdata
+```bash
+sudo ufw allow 5222   # client connections
+sudo ufw allow 5269   # server-to-server
+sudo ufw allow 5280   # HTTP (BOSH/WebSocket/upload, proxied via Caddy)
+sudo ufw allow 5281   # HTTPS
+```
 
-9) Set DB password in docker-compose.yml and prosody.cfg.lua
+## Known issues (0.11 limitation)
 
-10) Now you should be good to go so
+- Stream Management (XEP-0198) — module loads but doesn't work reliably
+- Push notifications (XEP-0357) — requires 0.12+
+- HTTP File Upload (XEP-0363) — requires 0.12+
 
-        docker compose up -d
+## Stack
 
-11) For errors and logs look into /prosody_server/logs.
-
-### Good Luck!
-        
-
-
-Main errors that I catched:
-
-1) Steam Management - XEP-0198
-
-2) Push - XEP-0357
-
-3) HTTP File Upload - XEP-0357
-
-   All of them can be fixed by modules but in Prosody version 0.12
+Prosody · PostgreSQL · Docker · Caddy · XMPP
